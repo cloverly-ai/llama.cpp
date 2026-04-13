@@ -1,0 +1,71 @@
+name: Sync Releases from Upstream
+
+on:
+  schedule:
+    # Check for new releases daily at 6:07 AM UTC
+    - cron: '7 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Specific upstream tag to sync (leave empty to sync latest)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+
+      - name: Determine tag to sync
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | jq -r '.tag_name')
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Check if this release already exists in our fork
+          if gh release view "$TAG" &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download upstream release assets
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p /tmp/assets
+          RELEASE=$(curl -s "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$TAG")
+          echo "$RELEASE" | jq -r '.body' > /tmp/release-body.md
+
+          # Download all assets
+          echo "$RELEASE" | jq -r '.assets[] | "\(.browser_download_url) \(.name)"' | while read url name; do
+            echo "Downloading $name ..."
+            curl -L -o "/tmp/assets/$name" "$url"
+          done
+
+      - name: Create release in fork
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # Ensure the tag exists in the fork (sync from upstream)
+          git fetch https://github.com/ggml-org/llama.cpp.git "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+          git push origin "refs/tags/$TAG" 2>/dev/null || true
+
+          # Create the release with all assets
+          gh release create "$TAG" /tmp/assets/* \
+            --title "$TAG" \
+            --notes-file /tmp/release-body.md
