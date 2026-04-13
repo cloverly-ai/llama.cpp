@@ -38,11 +38,19 @@ jobs:
           echo "Syncing tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          if gh release view "$TAG" &>/dev/null; then
-            echo "Release $TAG already exists, skipping."
+          # Check if a release with assets already exists (not just the tag)
+          ASSET_COUNT=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
+            | jq '.assets | length // 0')
+
+          if [ "$ASSET_COUNT" -gt "0" ]; then
+            echo "Release $TAG already exists with $ASSET_COUNT assets, skipping."
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
+            echo "Release $TAG does not exist or has no assets, will sync."
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            # Clean up any partial release
+            gh release delete "$TAG" --yes 2>/dev/null || true
           fi
 
       - name: Sync tag from upstream
