@@ -38,7 +38,6 @@ jobs:
           echo "Syncing tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          # Check if a release with assets already exists (not just the tag)
           ASSET_COUNT=$(curl -s -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
             | jq '.assets | length // 0')
@@ -49,7 +48,6 @@ jobs:
           else
             echo "Release $TAG does not exist or has no assets, will sync."
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            # Clean up any partial release
             gh release delete "$TAG" --yes 2>/dev/null || true
           fi
 
@@ -58,8 +56,11 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          git fetch upstream "refs/tags/$TAG:refs/tags/$TAG"
-          git push origin "refs/tags/$TAG"
+          # Delete existing tag in fork if present (from a prior failed run)
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          # Fetch tag from upstream and push to fork
+          git fetch upstream "refs/tags/$TAG:refs/tags/$TAG" --force
+          git push origin "refs/tags/$TAG" --force
 
       - name: Download upstream release assets
         if: steps.tag.outputs.exists == 'false'
