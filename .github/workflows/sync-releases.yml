@@ -19,11 +19,6 @@ jobs:
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Add upstream remote
-        run: git remote add upstream https://github.com/ggml-org/llama.cpp.git
 
       - name: Determine tag to sync
         id: tag
@@ -49,18 +44,8 @@ jobs:
             echo "Release $TAG does not exist or has no assets, will sync."
             echo "exists=false" >> "$GITHUB_OUTPUT"
             gh release delete "$TAG" --yes 2>/dev/null || true
+            git push origin ":refs/tags/$TAG" 2>/dev/null || true
           fi
-
-      - name: Sync tag from upstream
-        if: steps.tag.outputs.exists == 'false'
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          # Delete existing tag in fork if present (from a prior failed run)
-          git push origin ":refs/tags/$TAG" 2>/dev/null || true
-          # Fetch tag from upstream and push to fork
-          git fetch upstream "refs/tags/$TAG:refs/tags/$TAG" --force
-          git push origin "refs/tags/$TAG" --force
 
       - name: Download upstream release assets
         if: steps.tag.outputs.exists == 'false'
@@ -84,6 +69,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
+          # Create a lightweight tag on HEAD (avoids pushing upstream commits with workflow files)
+          git tag -f "$TAG"
+          git push origin "refs/tags/$TAG" --force
+
           gh release create "$TAG" /tmp/assets/* \
             --title "$TAG" \
             --notes-file /tmp/release-body.md
